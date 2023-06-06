@@ -1,0 +1,28 @@
+
+
+type Book {
+    id: Int64!
+    name: String!
+    author: Author!
+    uuid: String!
+}
+
+type Author {
+    id: Int64!
+    name: String!
+    address: String!
+}
+
+input BookId {
+    id: Int64!
+}
+
+input NewBook {
+    name: String!
+    author: AuthorType
+}
+
+input AuthorType {
+    name: String
+}
+
