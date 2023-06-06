@@ -1,6 +1,6 @@
 # xyu-graphql
 example of gqlgen
-星星超过10个我就开发完整版本，或者自己拉取研究，此版本距离成功只差一步
+星星超过10个我就开放完整版本代码，或者自己拉取研究，此版本距离成功只差一步
 
 ## 启动
 + go get github.com/99designs/gqlgen
