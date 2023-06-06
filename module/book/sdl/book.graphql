@@ -13,7 +13,7 @@ type Author {
     address: String!
 }
 
-input BookId {
+input BookID {
     id: Int64!
 }
 
@@ -23,6 +23,6 @@ input NewBook {
 }
 
 input AuthorType {
-    name: String
+    name: String!
+    address: String!
 }
-

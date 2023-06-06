@@ -32,7 +32,7 @@ func (r *MutationResolver) CreateBook(ctx context.Context, input model.NewBook) 
 }
 
 // DeleteBook is the resolver for the createBook field.
-func (r *MutationResolver) DeleteBook(ctx context.Context, input model.BookID) (*bool, error) {
-	var res = true
-	return &res, nil
+func (r *MutationResolver) DeleteBook(ctx context.Context, input model.BookID) (bool, error) {
+
+	return true, nil
 }

@@ -10,5 +10,17 @@ example of gqlgen
 + 执行gqlgen
 
 
+## 步骤
++ 1.更新base.graphql文件和dao/model下面的结构体
++ 2.删除目录 generated, graph
++ 3.命令行执行gqlgen
++ 4.使用生成的base_gen.go的内容覆盖pro_gen.go,删除base_gen.go
++ 5.再次命令行执行gqlgen
++ 6.删除新生成的base_gen.go
++ 7.去generated将错误的包引用改正确
++ 8.实现resolver接口
++ 9.运行即可
+
+
 
 ![img.png](assets/img.png)

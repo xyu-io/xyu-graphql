@@ -7,15 +7,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"xyu-graphql/internal/dao"
+	"xyu-graphql/internal/dao/model"
+
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/introspection"
 	gqlparser "github.com/vektah/gqlparser/v2"
 	"github.com/vektah/gqlparser/v2/ast"
-	"strconv"
-	"sync"
-	"sync/atomic"
-	dao "xyu-graphql/internal/dao"
-	main "xyu-graphql/internal/dao/model"
 )
 
 // region    ************************** generated!.gotpl **************************
@@ -62,12 +63,13 @@ type ComplexityRoot struct {
 	}
 
 	BookMutationObject struct {
-		CreateBook func(childComplexity int, input main.NewBook) int
-		DeleteBook func(childComplexity int, input main.BookID) int
+		CreateBook func(childComplexity int, input model.NewBook) int
+		DeleteBook func(childComplexity int, input model.BookID) int
 	}
 
 	BookQueryObject struct {
-		Books func(childComplexity int) int
+		Books       func(childComplexity int) int
+		GetBookByID func(childComplexity int, input model.BookID) int
 	}
 
 	Mutation struct {
@@ -88,7 +90,7 @@ type ComplexityRoot struct {
 	}
 
 	TodoMutationObject struct {
-		NewTodo func(childComplexity int, input main.NewTodo) int
+		NewTodo func(childComplexity int, input model.NewTodo) int
 	}
 
 	TodoQueryObject struct {
@@ -102,10 +104,11 @@ type ComplexityRoot struct {
 }
 
 type BookMutationObjectResolver interface {
-	CreateBook(ctx context.Context, obj *dao.BookMutationObject, input main.NewBook) (*main.Book, error)
+	CreateBook(ctx context.Context, obj *dao.BookMutationObject, input model.NewBook) (*model.Book, error)
 }
 type BookQueryObjectResolver interface {
-	Books(ctx context.Context, obj *dao.BookQueryObject) ([]*main.Book, error)
+	Books(ctx context.Context, obj *dao.BookQueryObject) ([]*model.Book, error)
+	GetBookByID(ctx context.Context, obj *dao.BookQueryObject, input model.BookID) ([]*model.Book, error)
 }
 type MutationResolver interface {
 	TodoServer(ctx context.Context) (*dao.TodoMutationObject, error)
@@ -116,10 +119,10 @@ type QueryResolver interface {
 	BookServer(ctx context.Context) (*dao.BookQueryObject, error)
 }
 type TodoMutationObjectResolver interface {
-	NewTodo(ctx context.Context, obj *dao.TodoMutationObject, input main.NewTodo) (*main.Todo, error)
+	NewTodo(ctx context.Context, obj *dao.TodoMutationObject, input model.NewTodo) (*model.Todo, error)
 }
 type TodoQueryObjectResolver interface {
-	Todos(ctx context.Context, obj *dao.TodoQueryObject) ([]*main.Todo, error)
+	Todos(ctx context.Context, obj *dao.TodoQueryObject) ([]*model.Todo, error)
 }
 
 type executableSchema struct {
@@ -196,7 +199,7 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 			return 0, false
 		}
 
-		return e.complexity.BookMutationObject.CreateBook(childComplexity, args["input"].(main.NewBook)), true
+		return e.complexity.BookMutationObject.CreateBook(childComplexity, args["input"].(model.NewBook)), true
 
 	case "BookMutationObject.deleteBook":
 		if e.complexity.BookMutationObject.DeleteBook == nil {
@@ -208,7 +211,7 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 			return 0, false
 		}
 
-		return e.complexity.BookMutationObject.DeleteBook(childComplexity, args["input"].(main.BookID)), true
+		return e.complexity.BookMutationObject.DeleteBook(childComplexity, args["input"].(model.BookID)), true
 
 	case "BookQueryObject.books":
 		if e.complexity.BookQueryObject.Books == nil {
@@ -216,6 +219,18 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 		}
 
 		return e.complexity.BookQueryObject.Books(childComplexity), true
+
+	case "BookQueryObject.getBookByID":
+		if e.complexity.BookQueryObject.GetBookByID == nil {
+			break
+		}
+
+		args, err := ec.field_BookQueryObject_getBookByID_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.BookQueryObject.GetBookByID(childComplexity, args["input"].(model.BookID)), true
 
 	case "Mutation.BookServer":
 		if e.complexity.Mutation.BookServer == nil {
@@ -283,7 +298,7 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 			return 0, false
 		}
 
-		return e.complexity.TodoMutationObject.NewTodo(childComplexity, args["input"].(main.NewTodo)), true
+		return e.complexity.TodoMutationObject.NewTodo(childComplexity, args["input"].(model.NewTodo)), true
 
 	case "TodoQueryObject.todos":
 		if e.complexity.TodoQueryObject.Todos == nil {
@@ -315,7 +330,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	ec := executionContext{rc, e}
 	inputUnmarshalMap := graphql.BuildUnmarshalerMap(
 		ec.unmarshalInputAuthorType,
-		ec.unmarshalInputBookId,
+		ec.unmarshalInputBookID,
 		ec.unmarshalInputNewBook,
 		ec.unmarshalInputNewTodo,
 	)
@@ -378,17 +393,17 @@ func (ec *executionContext) introspectType(name string) (*introspection.Type, er
 }
 
 var sources = []*ast.Source{
-	{Name: "../base.graphql", Input: `# 声明自定义标量类型
+	{Name: "../schema/base.graphql", Input: `# 声明自定义标量类型
 scalar Int64
 
 type Mutation {
-    TodoServer: TodoMutationObject
-    BookServer: BookMutationObject
+    TodoServer:TodoMutationObject
+    BookServer:BookMutationObject
 }
 
 type Query {
-    TodoServer: TodoQueryObject
-    BookServer: BookQueryObject
+    TodoServer:TodoQueryObject
+    BookServer:BookQueryObject
 }
 
 type TodoQueryObject {
@@ -401,11 +416,12 @@ type TodoMutationObject {
 
 type BookQueryObject {
     books: [Book!]!
+    getBookByID(input: BookID!): [Book!]!
 }
 
 type BookMutationObject {
     createBook(input: NewBook!): Book!
-    deleteBook(input: BookId!): Boolean
+    deleteBook(input: BookID!): Boolean
 }`, BuiltIn: false},
 	{Name: "../../../module/book/sdl/book.graphql", Input: `
 
@@ -422,7 +438,7 @@ type Author {
     address: String!
 }
 
-input BookId {
+input BookID {
     id: Int64!
 }
 
@@ -432,9 +448,9 @@ input NewBook {
 }
 
 input AuthorType {
-    name: String
+    name: String!
+    address: String!
 }
-
 `, BuiltIn: false},
 	{Name: "../../../module/todo/sdl/todo.graphql", Input: `
 
@@ -465,10 +481,10 @@ var parsedSchema = gqlparser.MustLoadSchema(sources...)
 func (ec *executionContext) field_BookMutationObject_createBook_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
 	var err error
 	args := map[string]interface{}{}
-	var arg0 main.NewBook
+	var arg0 model.NewBook
 	if tmp, ok := rawArgs["input"]; ok {
 		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("input"))
-		arg0, err = ec.unmarshalNNewBook2xyuᚑgraphqlᚐNewBook(ctx, tmp)
+		arg0, err = ec.unmarshalNNewBook2xyuᚑgraphqlᚋinternalᚋdaoᚐNewBook(ctx, tmp)
 		if err != nil {
 			return nil, err
 		}
@@ -480,10 +496,25 @@ func (ec *executionContext) field_BookMutationObject_createBook_args(ctx context
 func (ec *executionContext) field_BookMutationObject_deleteBook_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
 	var err error
 	args := map[string]interface{}{}
-	var arg0 main.BookID
+	var arg0 model.BookID
 	if tmp, ok := rawArgs["input"]; ok {
 		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("input"))
-		arg0, err = ec.unmarshalNBookId2xyuᚑgraphqlᚐBookID(ctx, tmp)
+		arg0, err = ec.unmarshalNBookID2xyuᚑgraphqlᚋinternalᚋdaoᚐBookID(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_BookQueryObject_getBookByID_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 model.BookID
+	if tmp, ok := rawArgs["input"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("input"))
+		arg0, err = ec.unmarshalNBookID2xyuᚑgraphqlᚋinternalᚋdaoᚐBookID(ctx, tmp)
 		if err != nil {
 			return nil, err
 		}
@@ -510,10 +541,10 @@ func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs
 func (ec *executionContext) field_TodoMutationObject_newTodo_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
 	var err error
 	args := map[string]interface{}{}
-	var arg0 main.NewTodo
+	var arg0 model.NewTodo
 	if tmp, ok := rawArgs["input"]; ok {
 		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("input"))
-		arg0, err = ec.unmarshalNNewTodo2xyuᚑgraphqlᚐNewTodo(ctx, tmp)
+		arg0, err = ec.unmarshalNNewTodo2xyuᚑgraphqlᚋinternalᚋdaoᚐNewTodo(ctx, tmp)
 		if err != nil {
 			return nil, err
 		}
@@ -560,7 +591,7 @@ func (ec *executionContext) field___Type_fields_args(ctx context.Context, rawArg
 
 // region    **************************** field.gotpl *****************************
 
-func (ec *executionContext) _Author_id(ctx context.Context, field graphql.CollectedField, obj *main.Author) (ret graphql.Marshaler) {
+func (ec *executionContext) _Author_id(ctx context.Context, field graphql.CollectedField, obj *model.Author) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_Author_id(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -604,7 +635,7 @@ func (ec *executionContext) fieldContext_Author_id(ctx context.Context, field gr
 	return fc, nil
 }
 
-func (ec *executionContext) _Author_name(ctx context.Context, field graphql.CollectedField, obj *main.Author) (ret graphql.Marshaler) {
+func (ec *executionContext) _Author_name(ctx context.Context, field graphql.CollectedField, obj *model.Author) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_Author_name(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -648,7 +679,7 @@ func (ec *executionContext) fieldContext_Author_name(ctx context.Context, field 
 	return fc, nil
 }
 
-func (ec *executionContext) _Author_address(ctx context.Context, field graphql.CollectedField, obj *main.Author) (ret graphql.Marshaler) {
+func (ec *executionContext) _Author_address(ctx context.Context, field graphql.CollectedField, obj *model.Author) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_Author_address(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -692,7 +723,7 @@ func (ec *executionContext) fieldContext_Author_address(ctx context.Context, fie
 	return fc, nil
 }
 
-func (ec *executionContext) _Book_id(ctx context.Context, field graphql.CollectedField, obj *main.Book) (ret graphql.Marshaler) {
+func (ec *executionContext) _Book_id(ctx context.Context, field graphql.CollectedField, obj *model.Book) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_Book_id(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -736,7 +767,7 @@ func (ec *executionContext) fieldContext_Book_id(ctx context.Context, field grap
 	return fc, nil
 }
 
-func (ec *executionContext) _Book_name(ctx context.Context, field graphql.CollectedField, obj *main.Book) (ret graphql.Marshaler) {
+func (ec *executionContext) _Book_name(ctx context.Context, field graphql.CollectedField, obj *model.Book) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_Book_name(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -780,7 +811,7 @@ func (ec *executionContext) fieldContext_Book_name(ctx context.Context, field gr
 	return fc, nil
 }
 
-func (ec *executionContext) _Book_author(ctx context.Context, field graphql.CollectedField, obj *main.Book) (ret graphql.Marshaler) {
+func (ec *executionContext) _Book_author(ctx context.Context, field graphql.CollectedField, obj *model.Book) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_Book_author(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -806,9 +837,9 @@ func (ec *executionContext) _Book_author(ctx context.Context, field graphql.Coll
 		}
 		return graphql.Null
 	}
-	res := resTmp.(*main.Author)
+	res := resTmp.(*model.Author)
 	fc.Result = res
-	return ec.marshalNAuthor2ᚖxyuᚑgraphqlᚐAuthor(ctx, field.Selections, res)
+	return ec.marshalNAuthor2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐAuthor(ctx, field.Selections, res)
 }
 
 func (ec *executionContext) fieldContext_Book_author(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
@@ -832,7 +863,7 @@ func (ec *executionContext) fieldContext_Book_author(ctx context.Context, field 
 	return fc, nil
 }
 
-func (ec *executionContext) _Book_uuid(ctx context.Context, field graphql.CollectedField, obj *main.Book) (ret graphql.Marshaler) {
+func (ec *executionContext) _Book_uuid(ctx context.Context, field graphql.CollectedField, obj *model.Book) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_Book_uuid(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -890,7 +921,7 @@ func (ec *executionContext) _BookMutationObject_createBook(ctx context.Context, 
 	}()
 	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
 		ctx = rctx // use context from middleware stack in children
-		return ec.resolvers.BookMutationObject().CreateBook(rctx, obj, fc.Args["input"].(main.NewBook))
+		return ec.resolvers.BookMutationObject().CreateBook(rctx, obj, fc.Args["input"].(model.NewBook))
 	})
 	if err != nil {
 		ec.Error(ctx, err)
@@ -902,9 +933,9 @@ func (ec *executionContext) _BookMutationObject_createBook(ctx context.Context, 
 		}
 		return graphql.Null
 	}
-	res := resTmp.(*main.Book)
+	res := resTmp.(*model.Book)
 	fc.Result = res
-	return ec.marshalNBook2ᚖxyuᚑgraphqlᚐBook(ctx, field.Selections, res)
+	return ec.marshalNBook2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐBook(ctx, field.Selections, res)
 }
 
 func (ec *executionContext) fieldContext_BookMutationObject_createBook(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
@@ -1019,9 +1050,9 @@ func (ec *executionContext) _BookQueryObject_books(ctx context.Context, field gr
 		}
 		return graphql.Null
 	}
-	res := resTmp.([]*main.Book)
+	res := resTmp.([]*model.Book)
 	fc.Result = res
-	return ec.marshalNBook2ᚕᚖxyuᚑgraphqlᚐBookᚄ(ctx, field.Selections, res)
+	return ec.marshalNBook2ᚕᚖxyuᚑgraphqlᚋinternalᚋdaoᚐBookᚄ(ctx, field.Selections, res)
 }
 
 func (ec *executionContext) fieldContext_BookQueryObject_books(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
@@ -1043,6 +1074,71 @@ func (ec *executionContext) fieldContext_BookQueryObject_books(ctx context.Conte
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Book", field.Name)
 		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BookQueryObject_getBookByID(ctx context.Context, field graphql.CollectedField, obj *dao.BookQueryObject) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_BookQueryObject_getBookByID(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return ec.resolvers.BookQueryObject().GetBookByID(rctx, obj, fc.Args["input"].(model.BookID))
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.([]*model.Book)
+	fc.Result = res
+	return ec.marshalNBook2ᚕᚖxyuᚑgraphqlᚋinternalᚋdaoᚐBookᚄ(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_BookQueryObject_getBookByID(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BookQueryObject",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Book_id(ctx, field)
+			case "name":
+				return ec.fieldContext_Book_name(ctx, field)
+			case "author":
+				return ec.fieldContext_Book_author(ctx, field)
+			case "uuid":
+				return ec.fieldContext_Book_uuid(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Book", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_BookQueryObject_getBookByID_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return
 	}
 	return fc, nil
 }
@@ -1222,6 +1318,8 @@ func (ec *executionContext) fieldContext_Query_BookServer(ctx context.Context, f
 			switch field.Name {
 			case "books":
 				return ec.fieldContext_BookQueryObject_books(ctx, field)
+			case "getBookByID":
+				return ec.fieldContext_BookQueryObject_getBookByID(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type BookQueryObject", field.Name)
 		},
@@ -1358,7 +1456,7 @@ func (ec *executionContext) fieldContext_Query___schema(ctx context.Context, fie
 	return fc, nil
 }
 
-func (ec *executionContext) _Todo_id(ctx context.Context, field graphql.CollectedField, obj *main.Todo) (ret graphql.Marshaler) {
+func (ec *executionContext) _Todo_id(ctx context.Context, field graphql.CollectedField, obj *model.Todo) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_Todo_id(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -1402,7 +1500,7 @@ func (ec *executionContext) fieldContext_Todo_id(ctx context.Context, field grap
 	return fc, nil
 }
 
-func (ec *executionContext) _Todo_text(ctx context.Context, field graphql.CollectedField, obj *main.Todo) (ret graphql.Marshaler) {
+func (ec *executionContext) _Todo_text(ctx context.Context, field graphql.CollectedField, obj *model.Todo) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_Todo_text(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -1446,7 +1544,7 @@ func (ec *executionContext) fieldContext_Todo_text(ctx context.Context, field gr
 	return fc, nil
 }
 
-func (ec *executionContext) _Todo_done(ctx context.Context, field graphql.CollectedField, obj *main.Todo) (ret graphql.Marshaler) {
+func (ec *executionContext) _Todo_done(ctx context.Context, field graphql.CollectedField, obj *model.Todo) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_Todo_done(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -1490,7 +1588,7 @@ func (ec *executionContext) fieldContext_Todo_done(ctx context.Context, field gr
 	return fc, nil
 }
 
-func (ec *executionContext) _Todo_user(ctx context.Context, field graphql.CollectedField, obj *main.Todo) (ret graphql.Marshaler) {
+func (ec *executionContext) _Todo_user(ctx context.Context, field graphql.CollectedField, obj *model.Todo) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_Todo_user(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -1516,9 +1614,9 @@ func (ec *executionContext) _Todo_user(ctx context.Context, field graphql.Collec
 		}
 		return graphql.Null
 	}
-	res := resTmp.(*main.User)
+	res := resTmp.(*model.User)
 	fc.Result = res
-	return ec.marshalNUser2ᚖxyuᚑgraphqlᚐUser(ctx, field.Selections, res)
+	return ec.marshalNUser2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐUser(ctx, field.Selections, res)
 }
 
 func (ec *executionContext) fieldContext_Todo_user(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
@@ -1554,7 +1652,7 @@ func (ec *executionContext) _TodoMutationObject_newTodo(ctx context.Context, fie
 	}()
 	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
 		ctx = rctx // use context from middleware stack in children
-		return ec.resolvers.TodoMutationObject().NewTodo(rctx, obj, fc.Args["input"].(main.NewTodo))
+		return ec.resolvers.TodoMutationObject().NewTodo(rctx, obj, fc.Args["input"].(model.NewTodo))
 	})
 	if err != nil {
 		ec.Error(ctx, err)
@@ -1566,9 +1664,9 @@ func (ec *executionContext) _TodoMutationObject_newTodo(ctx context.Context, fie
 		}
 		return graphql.Null
 	}
-	res := resTmp.(*main.Todo)
+	res := resTmp.(*model.Todo)
 	fc.Result = res
-	return ec.marshalNTodo2ᚖxyuᚑgraphqlᚐTodo(ctx, field.Selections, res)
+	return ec.marshalNTodo2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐTodo(ctx, field.Selections, res)
 }
 
 func (ec *executionContext) fieldContext_TodoMutationObject_newTodo(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
@@ -1631,9 +1729,9 @@ func (ec *executionContext) _TodoQueryObject_todos(ctx context.Context, field gr
 		}
 		return graphql.Null
 	}
-	res := resTmp.([]*main.Todo)
+	res := resTmp.([]*model.Todo)
 	fc.Result = res
-	return ec.marshalNTodo2ᚕᚖxyuᚑgraphqlᚐTodoᚄ(ctx, field.Selections, res)
+	return ec.marshalNTodo2ᚕᚖxyuᚑgraphqlᚋinternalᚋdaoᚐTodoᚄ(ctx, field.Selections, res)
 }
 
 func (ec *executionContext) fieldContext_TodoQueryObject_todos(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
@@ -1659,7 +1757,7 @@ func (ec *executionContext) fieldContext_TodoQueryObject_todos(ctx context.Conte
 	return fc, nil
 }
 
-func (ec *executionContext) _User_id(ctx context.Context, field graphql.CollectedField, obj *main.User) (ret graphql.Marshaler) {
+func (ec *executionContext) _User_id(ctx context.Context, field graphql.CollectedField, obj *model.User) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_User_id(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -1703,7 +1801,7 @@ func (ec *executionContext) fieldContext_User_id(ctx context.Context, field grap
 	return fc, nil
 }
 
-func (ec *executionContext) _User_name(ctx context.Context, field graphql.CollectedField, obj *main.User) (ret graphql.Marshaler) {
+func (ec *executionContext) _User_name(ctx context.Context, field graphql.CollectedField, obj *model.User) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_User_name(ctx, field)
 	if err != nil {
 		return graphql.Null
@@ -3520,14 +3618,14 @@ func (ec *executionContext) fieldContext___Type_specifiedByURL(ctx context.Conte
 
 // region    **************************** input.gotpl *****************************
 
-func (ec *executionContext) unmarshalInputAuthorType(ctx context.Context, obj interface{}) (main.AuthorType, error) {
-	var it main.AuthorType
+func (ec *executionContext) unmarshalInputAuthorType(ctx context.Context, obj interface{}) (model.AuthorType, error) {
+	var it model.AuthorType
 	asMap := map[string]interface{}{}
 	for k, v := range obj.(map[string]interface{}) {
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name"}
+	fieldsInOrder := [...]string{"name", "address"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -3538,19 +3636,28 @@ func (ec *executionContext) unmarshalInputAuthorType(ctx context.Context, obj in
 			var err error
 
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
-			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			data, err := ec.unmarshalNString2string(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Name = data
+		case "address":
+			var err error
+
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("address"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Address = data
 		}
 	}
 
 	return it, nil
 }
 
-func (ec *executionContext) unmarshalInputBookId(ctx context.Context, obj interface{}) (main.BookID, error) {
-	var it main.BookID
+func (ec *executionContext) unmarshalInputBookID(ctx context.Context, obj interface{}) (model.BookID, error) {
+	var it model.BookID
 	asMap := map[string]interface{}{}
 	for k, v := range obj.(map[string]interface{}) {
 		asMap[k] = v
@@ -3578,8 +3685,8 @@ func (ec *executionContext) unmarshalInputBookId(ctx context.Context, obj interf
 	return it, nil
 }
 
-func (ec *executionContext) unmarshalInputNewBook(ctx context.Context, obj interface{}) (main.NewBook, error) {
-	var it main.NewBook
+func (ec *executionContext) unmarshalInputNewBook(ctx context.Context, obj interface{}) (model.NewBook, error) {
+	var it model.NewBook
 	asMap := map[string]interface{}{}
 	for k, v := range obj.(map[string]interface{}) {
 		asMap[k] = v
@@ -3605,7 +3712,7 @@ func (ec *executionContext) unmarshalInputNewBook(ctx context.Context, obj inter
 			var err error
 
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("author"))
-			data, err := ec.unmarshalOAuthorType2ᚖxyuᚑgraphqlᚐAuthorType(ctx, v)
+			data, err := ec.unmarshalOAuthorType2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐAuthorType(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -3616,8 +3723,8 @@ func (ec *executionContext) unmarshalInputNewBook(ctx context.Context, obj inter
 	return it, nil
 }
 
-func (ec *executionContext) unmarshalInputNewTodo(ctx context.Context, obj interface{}) (main.NewTodo, error) {
-	var it main.NewTodo
+func (ec *executionContext) unmarshalInputNewTodo(ctx context.Context, obj interface{}) (model.NewTodo, error) {
+	var it model.NewTodo
 	asMap := map[string]interface{}{}
 	for k, v := range obj.(map[string]interface{}) {
 		asMap[k] = v
@@ -3664,7 +3771,7 @@ func (ec *executionContext) unmarshalInputNewTodo(ctx context.Context, obj inter
 
 var authorImplementors = []string{"Author"}
 
-func (ec *executionContext) _Author(ctx context.Context, sel ast.SelectionSet, obj *main.Author) graphql.Marshaler {
+func (ec *executionContext) _Author(ctx context.Context, sel ast.SelectionSet, obj *model.Author) graphql.Marshaler {
 	fields := graphql.CollectFields(ec.OperationContext, sel, authorImplementors)
 	out := graphql.NewFieldSet(fields)
 	var invalids uint32
@@ -3706,7 +3813,7 @@ func (ec *executionContext) _Author(ctx context.Context, sel ast.SelectionSet, o
 
 var bookImplementors = []string{"Book"}
 
-func (ec *executionContext) _Book(ctx context.Context, sel ast.SelectionSet, obj *main.Book) graphql.Marshaler {
+func (ec *executionContext) _Book(ctx context.Context, sel ast.SelectionSet, obj *model.Book) graphql.Marshaler {
 	fields := graphql.CollectFields(ec.OperationContext, sel, bookImplementors)
 	out := graphql.NewFieldSet(fields)
 	var invalids uint32
@@ -3818,6 +3925,26 @@ func (ec *executionContext) _BookQueryObject(ctx context.Context, sel ast.Select
 					}
 				}()
 				res = ec._BookQueryObject_books(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&invalids, 1)
+				}
+				return res
+			}
+
+			out.Concurrently(i, func() graphql.Marshaler {
+				return innerFunc(ctx)
+
+			})
+		case "getBookByID":
+			field := field
+
+			innerFunc := func(ctx context.Context) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._BookQueryObject_getBookByID(ctx, field, obj)
 				if res == graphql.Null {
 					atomic.AddUint32(&invalids, 1)
 				}
@@ -3965,7 +4092,7 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 
 var todoImplementors = []string{"Todo"}
 
-func (ec *executionContext) _Todo(ctx context.Context, sel ast.SelectionSet, obj *main.Todo) graphql.Marshaler {
+func (ec *executionContext) _Todo(ctx context.Context, sel ast.SelectionSet, obj *model.Todo) graphql.Marshaler {
 	fields := graphql.CollectFields(ec.OperationContext, sel, todoImplementors)
 	out := graphql.NewFieldSet(fields)
 	var invalids uint32
@@ -4096,7 +4223,7 @@ func (ec *executionContext) _TodoQueryObject(ctx context.Context, sel ast.Select
 
 var userImplementors = []string{"User"}
 
-func (ec *executionContext) _User(ctx context.Context, sel ast.SelectionSet, obj *main.User) graphql.Marshaler {
+func (ec *executionContext) _User(ctx context.Context, sel ast.SelectionSet, obj *model.User) graphql.Marshaler {
 	fields := graphql.CollectFields(ec.OperationContext, sel, userImplementors)
 	out := graphql.NewFieldSet(fields)
 	var invalids uint32
@@ -4447,7 +4574,7 @@ func (ec *executionContext) ___Type(ctx context.Context, sel ast.SelectionSet, o
 
 // region    ***************************** type.gotpl *****************************
 
-func (ec *executionContext) marshalNAuthor2ᚖxyuᚑgraphqlᚐAuthor(ctx context.Context, sel ast.SelectionSet, v *main.Author) graphql.Marshaler {
+func (ec *executionContext) marshalNAuthor2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐAuthor(ctx context.Context, sel ast.SelectionSet, v *model.Author) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			ec.Errorf(ctx, "the requested element is null which the schema does not allow")
@@ -4457,11 +4584,11 @@ func (ec *executionContext) marshalNAuthor2ᚖxyuᚑgraphqlᚐAuthor(ctx context
 	return ec._Author(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNBook2xyuᚑgraphqlᚐBook(ctx context.Context, sel ast.SelectionSet, v main.Book) graphql.Marshaler {
+func (ec *executionContext) marshalNBook2xyuᚑgraphqlᚋinternalᚋdaoᚐBook(ctx context.Context, sel ast.SelectionSet, v model.Book) graphql.Marshaler {
 	return ec._Book(ctx, sel, &v)
 }
 
-func (ec *executionContext) marshalNBook2ᚕᚖxyuᚑgraphqlᚐBookᚄ(ctx context.Context, sel ast.SelectionSet, v []*main.Book) graphql.Marshaler {
+func (ec *executionContext) marshalNBook2ᚕᚖxyuᚑgraphqlᚋinternalᚋdaoᚐBookᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Book) graphql.Marshaler {
 	ret := make(graphql.Array, len(v))
 	var wg sync.WaitGroup
 	isLen1 := len(v) == 1
@@ -4485,7 +4612,7 @@ func (ec *executionContext) marshalNBook2ᚕᚖxyuᚑgraphqlᚐBookᚄ(ctx conte
 			if !isLen1 {
 				defer wg.Done()
 			}
-			ret[i] = ec.marshalNBook2ᚖxyuᚑgraphqlᚐBook(ctx, sel, v[i])
+			ret[i] = ec.marshalNBook2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐBook(ctx, sel, v[i])
 		}
 		if isLen1 {
 			f(i)
@@ -4505,7 +4632,7 @@ func (ec *executionContext) marshalNBook2ᚕᚖxyuᚑgraphqlᚐBookᚄ(ctx conte
 	return ret
 }
 
-func (ec *executionContext) marshalNBook2ᚖxyuᚑgraphqlᚐBook(ctx context.Context, sel ast.SelectionSet, v *main.Book) graphql.Marshaler {
+func (ec *executionContext) marshalNBook2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐBook(ctx context.Context, sel ast.SelectionSet, v *model.Book) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			ec.Errorf(ctx, "the requested element is null which the schema does not allow")
@@ -4515,8 +4642,8 @@ func (ec *executionContext) marshalNBook2ᚖxyuᚑgraphqlᚐBook(ctx context.Con
 	return ec._Book(ctx, sel, v)
 }
 
-func (ec *executionContext) unmarshalNBookId2xyuᚑgraphqlᚐBookID(ctx context.Context, v interface{}) (main.BookID, error) {
-	res, err := ec.unmarshalInputBookId(ctx, v)
+func (ec *executionContext) unmarshalNBookID2xyuᚑgraphqlᚋinternalᚋdaoᚐBookID(ctx context.Context, v interface{}) (model.BookID, error) {
+	res, err := ec.unmarshalInputBookID(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
@@ -4550,12 +4677,12 @@ func (ec *executionContext) marshalNInt642int64(ctx context.Context, sel ast.Sel
 	return res
 }
 
-func (ec *executionContext) unmarshalNNewBook2xyuᚑgraphqlᚐNewBook(ctx context.Context, v interface{}) (main.NewBook, error) {
+func (ec *executionContext) unmarshalNNewBook2xyuᚑgraphqlᚋinternalᚋdaoᚐNewBook(ctx context.Context, v interface{}) (model.NewBook, error) {
 	res, err := ec.unmarshalInputNewBook(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) unmarshalNNewTodo2xyuᚑgraphqlᚐNewTodo(ctx context.Context, v interface{}) (main.NewTodo, error) {
+func (ec *executionContext) unmarshalNNewTodo2xyuᚑgraphqlᚋinternalᚋdaoᚐNewTodo(ctx context.Context, v interface{}) (model.NewTodo, error) {
 	res, err := ec.unmarshalInputNewTodo(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
@@ -4575,11 +4702,11 @@ func (ec *executionContext) marshalNString2string(ctx context.Context, sel ast.S
 	return res
 }
 
-func (ec *executionContext) marshalNTodo2xyuᚑgraphqlᚐTodo(ctx context.Context, sel ast.SelectionSet, v main.Todo) graphql.Marshaler {
+func (ec *executionContext) marshalNTodo2xyuᚑgraphqlᚋinternalᚋdaoᚐTodo(ctx context.Context, sel ast.SelectionSet, v model.Todo) graphql.Marshaler {
 	return ec._Todo(ctx, sel, &v)
 }
 
-func (ec *executionContext) marshalNTodo2ᚕᚖxyuᚑgraphqlᚐTodoᚄ(ctx context.Context, sel ast.SelectionSet, v []*main.Todo) graphql.Marshaler {
+func (ec *executionContext) marshalNTodo2ᚕᚖxyuᚑgraphqlᚋinternalᚋdaoᚐTodoᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Todo) graphql.Marshaler {
 	ret := make(graphql.Array, len(v))
 	var wg sync.WaitGroup
 	isLen1 := len(v) == 1
@@ -4603,7 +4730,7 @@ func (ec *executionContext) marshalNTodo2ᚕᚖxyuᚑgraphqlᚐTodoᚄ(ctx conte
 			if !isLen1 {
 				defer wg.Done()
 			}
-			ret[i] = ec.marshalNTodo2ᚖxyuᚑgraphqlᚐTodo(ctx, sel, v[i])
+			ret[i] = ec.marshalNTodo2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐTodo(ctx, sel, v[i])
 		}
 		if isLen1 {
 			f(i)
@@ -4623,7 +4750,7 @@ func (ec *executionContext) marshalNTodo2ᚕᚖxyuᚑgraphqlᚐTodoᚄ(ctx conte
 	return ret
 }
 
-func (ec *executionContext) marshalNTodo2ᚖxyuᚑgraphqlᚐTodo(ctx context.Context, sel ast.SelectionSet, v *main.Todo) graphql.Marshaler {
+func (ec *executionContext) marshalNTodo2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐTodo(ctx context.Context, sel ast.SelectionSet, v *model.Todo) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			ec.Errorf(ctx, "the requested element is null which the schema does not allow")
@@ -4633,7 +4760,7 @@ func (ec *executionContext) marshalNTodo2ᚖxyuᚑgraphqlᚐTodo(ctx context.Con
 	return ec._Todo(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNUser2ᚖxyuᚑgraphqlᚐUser(ctx context.Context, sel ast.SelectionSet, v *main.User) graphql.Marshaler {
+func (ec *executionContext) marshalNUser2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			ec.Errorf(ctx, "the requested element is null which the schema does not allow")
@@ -4896,7 +5023,7 @@ func (ec *executionContext) marshalN__TypeKind2string(ctx context.Context, sel a
 	return res
 }
 
-func (ec *executionContext) unmarshalOAuthorType2ᚖxyuᚑgraphqlᚐAuthorType(ctx context.Context, v interface{}) (*main.AuthorType, error) {
+func (ec *executionContext) unmarshalOAuthorType2ᚖxyuᚑgraphqlᚋinternalᚋdaoᚐAuthorType(ctx context.Context, v interface{}) (*model.AuthorType, error) {
 	if v == nil {
 		return nil, nil
 	}

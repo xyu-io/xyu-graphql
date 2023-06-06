@@ -1,0 +1,30 @@
+# 声明自定义标量类型
+scalar Int64
+
+type Mutation {
+    TodoServer:TodoMutationObject
+    BookServer:BookMutationObject
+}
+
+type Query {
+    TodoServer:TodoQueryObject
+    BookServer:BookQueryObject
+}
+
+type TodoQueryObject {
+    todos: [Todo!]!
+}
+
+type TodoMutationObject {
+    newTodo(input: NewTodo!): Todo!
+}
+
+type BookQueryObject {
+    books: [Book!]!
+    getBookByID(input: BookID!): [Book!]!
+}
+
+type BookMutationObject {
+    createBook(input: NewBook!): Book!
+    deleteBook(input: BookID!): Boolean
+}
