@@ -7,12 +7,11 @@ type Todo {
     user: User!
 }
 
-type User {
-    id: Int64!
-    name: String!
-}
-
 input NewTodo {
     text: String!
     userId: String!
+}
+
+input TodoID {
+    id: Int64
 }

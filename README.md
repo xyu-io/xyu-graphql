@@ -1,27 +1,24 @@
 # xyu-graphql
-example of gqlgen
-星星超过10个我就开放完整版本代码，或者自己拉取研究，此版本距离成功只差一步
+基于gqlgen的graphql后端服务器搭建，可直接下载集成到自己项目，根据文档操作即可
 
-## 启动
+### 启动
 + go get github.com/99designs/gqlgen
 + go run main.go
 
-## 重新构建
-+ 更新gaphql文件
-+ 执行gqlgen
+### 操作
+#### 新增xxxServer 【可以自己改命名】
++ 1.更新dao/model_gen/下面的 model
++ 2.更新各个module下面的sdl的graphql文件
++ 3.更新schema下面的的graphql文件，定义接口，同时更新dao/model/base.go
++ 4.执行命令,实现接口
+#### 更新项目,即更新结构体，增加属性
++ 更新model_gen下面的结构体
++ 更新各个module下面的项目的sdl
++ 更新schema下的base.graphql
++ 命令行执行gqlgen
 
-
-## 步骤
-+ 1.更新base.graphql文件和dao/model下面的结构体
-+ 2.删除目录 generated, graph
-+ 3.命令行执行gqlgen
-+ 4.使用生成的base_gen.go的内容覆盖pro_gen.go,删除base_gen.go
-+ 5.再次命令行执行gqlgen
-+ 6.删除新生成的base_gen.go
-+ 7.去generated将错误的包引用改正确
-+ 8.实现resolver接口
-+ 9.运行即可
-
-
+### 特别注意
++ 1.如果在.grphql文件中，field后面没有加!，则在生成的结构体中是指针类型，保障安全性，但是性能会下降，因此需要酌情使用
++ 2.如果您熟练编写pro_gen.go的内容，那么新建项目的过程会很简单
 
 ![img.png](assets/img.png)

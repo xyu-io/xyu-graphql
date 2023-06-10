@@ -4,15 +4,24 @@ scalar Int64
 type Mutation {
     TodoServer:TodoMutationObject
     BookServer:BookMutationObject
+    UserServer:UserMutationObject
 }
 
 type Query {
     TodoServer:TodoQueryObject
     BookServer:BookQueryObject
+    UserServer:UserQueryObject
+    Test: TestQueryObject
+}
+
+type TestQueryObject {
+    test: Test!
 }
 
 type TodoQueryObject {
     todos: [Todo!]!
+    getTodoByID(input: TodoID): [Todo]!
+    getTodoByUserID(input: UserID): [Todo]!
 }
 
 type TodoMutationObject {
@@ -27,4 +36,13 @@ type BookQueryObject {
 type BookMutationObject {
     createBook(input: NewBook!): Book!
     deleteBook(input: BookID!): Boolean
+}
+
+type UserQueryObject {
+    userList: [User!]!
+    getUserByID(input: UserID!): [User!]!
+}
+
+type UserMutationObject {
+    registerUser(input: NewUser!): User!
 }

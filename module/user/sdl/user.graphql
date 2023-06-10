@@ -1,0 +1,27 @@
+
+
+type User {
+    id: Int64!
+    name: String!
+    job_id: Int64!
+    department_id: Int64!
+    seniority: Int64!
+    address: String!
+    birthday: String!
+    phone: String!
+    uuid: String!
+}
+
+input NewUser {
+    name: String!
+    job_id: Int64!
+    department_id: Int64
+    seniority: Int64
+    address: String!
+    birthday: String!
+    phone: String!
+}
+
+input UserID {
+    user_id: Int64!
+}

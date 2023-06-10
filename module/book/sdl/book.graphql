@@ -5,11 +5,13 @@ type Book {
     name: String!
     author: Author!
     uuid: String!
+    data: String
 }
 
 type Author {
     id: Int64!
     name: String!
+    phone: String
     address: String!
 }
 
@@ -24,5 +26,6 @@ input NewBook {
 
 input AuthorType {
     name: String!
+    phone: String
     address: String!
 }
